@@ -1,14 +1,16 @@
 import requests
-import ipfshttpclient
 import json
+import os
+from tqdm import tqdm
 
 # Configuration
 MAX_SNAPSHOT_ID = 25640
-NODE_ID = 1  
-IPFS_NODE_ADDRESS = '/dns/localhost/tcp/5001/http'
+NODE_ID = 1  # 1 for odd numbers, 2 for even numbers
+IPFS_API_URL = 'http://127.0.0.1:5001/api/v0'
+DATA_DIR = 'data'  # Directory to save JSON files
 
-# Initialize IPFS client
-client = ipfshttpclient.connect(IPFS_NODE_ADDRESS)
+# Ensure the data directory exists
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # Output files
 success_log = "successful_operations.log"
@@ -32,26 +34,35 @@ elif NODE_ID == 2:
 else:
     raise ValueError("NODE_ID must be either 1 (odd) or 2 (even)")
 
-# Process SNAPSHOT_IDs based on NODE_ID
-for snapshot_id in range(start_id, MAX_SNAPSHOT_ID + 1, 2):
+# Calculate total iterations for progress bar
+total_iterations = (MAX_SNAPSHOT_ID - start_id) // 2 + 1
+
+# Process SNAPSHOT_IDs based on NODE_ID with a progress bar
+for snapshot_id in tqdm(range(start_id, MAX_SNAPSHOT_ID + 1, 2), total=total_iterations, desc="Processing Snapshots"):
     url = f"https://arkivo.art/snapshots/{snapshot_id}"
     try:
         # Fetch the JSON file
         response = requests.get(url)
         response.raise_for_status()  # Raise an exception for HTTP errors
         
-        # Write the JSON content to a temporary file
+        # Write the JSON content to a file in the data directory
         json_content = response.json()
-        json_filename = f"snapshot_{snapshot_id}.json"
+        json_filename = os.path.join(DATA_DIR, f"snapshot_{snapshot_id}.json")
         with open(json_filename, 'w') as json_file:
             json.dump(json_content, json_file)
         
         # Add the file to IPFS
-        result = client.add(json_filename)
-        cid = result['Hash']
+        with open(json_filename, 'rb') as file_to_add:
+            files = {'file': file_to_add}
+            ipfs_response = requests.post(f"{IPFS_API_URL}/add", files=files)
+            ipfs_response.raise_for_status()
+            cid = ipfs_response.json()['Hash']
         
         # Log the successful operation
         log_success(snapshot_id, cid)
+        
+        # Delete the file after successful addition to IPFS
+        os.remove(json_filename)
         
     except requests.exceptions.RequestException as e:
         # Log any requests-related errors
